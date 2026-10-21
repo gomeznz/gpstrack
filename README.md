@@ -27,11 +27,19 @@ lift pump's run-on.
 
 ## Raspberry Pi
 
+**Full step-by-step guide: [docs/pi-setup.md](docs/pi-setup.md)**, from a blank SD card to a
+tracker connecting over 4G.
+
+Short version, on a Pi with Go installed:
+
 ```sh
-make pi                                  # 64-bit Pi OS; use `make pi32` for 32-bit
-scp -r bin/arm64 deploy pi@<pi>:gpstrack/
-ssh pi@<pi> 'cd gpstrack && sudo ./deploy/install-pi.sh arm64/gpstrack-gateway'
+git clone https://github.com/gomeznz/gpstrack.git && cd gpstrack
+make build
+sudo ./deploy/install-pi.sh bin/gpstrack-gateway
 ```
+
+Or cross-compile on another machine with `make pi` (or `make pi32` for 32-bit
+Pi OS) and copy `bin/arm64` and `deploy/` across.
 
 The install script creates a `gpstrack` service user, a systemd service, data
 in `/var/lib/gpstrack`, and `/etc/gpstrack/gpstrack.env` with a random token
