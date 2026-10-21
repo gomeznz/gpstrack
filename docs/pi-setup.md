@@ -37,6 +37,11 @@ e.g. `192.168.1.50`. You need a fixed address for the port forward in step 7.
 
 ## 4. Update and install tools
 
+Do this over **SSH**, not the Raspberry Pi Connect remote shell. Updating
+`rpi-connect` restarts the service the Connect shell runs through, which
+cuts the upgrade off half-way and leaves `dpkg was interrupted` errors. If
+that happens, SSH in and run `sudo dpkg --configure -a`.
+
 On the Pi:
 
 ```sh
