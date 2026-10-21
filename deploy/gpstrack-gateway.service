@@ -1,0 +1,23 @@
+[Unit]
+Description=gpstrack Phase 0 tracker gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gpstrack
+Group=gpstrack
+EnvironmentFile=/etc/gpstrack/gpstrack.env
+ExecStart=/opt/gpstrack/gpstrack-gateway -data /var/lib/gpstrack
+Restart=always
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/gpstrack
+StateDirectory=gpstrack
+
+[Install]
+WantedBy=multi-user.target

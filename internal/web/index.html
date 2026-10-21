@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpstrack · Phase 0</title>
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<script src="/static/leaflet/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1c1a; --quiet: #6b6863; --line: #e3e0da;
+    --accent: #1f6feb; --ok: #2e7d32; --warn: #b26a00; --bad: #c62828; --code: #f0eee9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #1f1f1d; --ink: #ecebe8; --quiet: #a09d97; --line: #34332f;
+      --accent: #6aa6ff; --ok: #66bb6a; --warn: #ffb74d; --bad: #ef5350; --code: #2a2926; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 17px; }
+  header .sub { color: var(--quiet); font-size: 13px; }
+  header .spacer { flex: 1; }
+  main { display: grid; gap: 16px; padding: 16px; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  section h2 { margin: 0; padding: 10px 14px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--quiet); border-bottom: 1px solid var(--line); }
+  #map { height: 360px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; font-size: 12px; color: var(--quiet); }
+  tr:last-child td { border-bottom: 0; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .on { background: var(--ok); } .off { background: var(--quiet); }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  code { background: var(--code); padding: 1px 4px; border-radius: 4px; word-break: break-all; }
+  .quiet { color: var(--quiet); }
+  .stack { display: grid; gap: 16px; align-content: start; }
+  .pad { padding: 12px 14px; display: grid; gap: 10px; }
+  label { font-size: 12px; color: var(--quiet); display: grid; gap: 4px; }
+  select, input, button { font: inherit; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); width: 100%; }
+  button { cursor: pointer; background: var(--accent); color: #fff; border: 0; font-weight: 600; }
+  button.danger { background: var(--bad); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .msg { font-size: 13px; min-height: 1.4em; }
+  .msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
+  #log { max-height: 520px; overflow: auto; }
+  #log div { padding: 6px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+  .tag { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .tag.in { color: var(--accent); } .tag.out { color: var(--warn); } .tag.info { color: var(--quiet); }
+  .scroll { overflow-x: auto; }
+  .empty { padding: 14px; color: var(--quiet); }
+</style>
+</head>
+<body>
+<header>
+  <h1>gpstrack</h1>
+  <span class="sub">Phase 0 gateway · H02 listener</span>
+  <span class="spacer"></span>
+  <span class="sub" id="clock"></span>
+</header>
+<main>
+  <div class="stack">
+    <section><h2>Map</h2><div id="map"></div></section>
+    <section>
+      <h2>Devices</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Device</th><th>Last seen</th><th>Position</th><th>Speed</th><th>Status bits</th></tr></thead>
+        <tbody id="devices"></tbody>
+      </table></div>
+    </section>
+  </div>
+  <div class="stack">
+    <section id="tokenBox" hidden>
+      <h2>Access</h2>
+      <div class="pad">
+        <label>Token<input id="token" type="password" autocomplete="off"></label>
+        <button id="saveToken">Unlock</button>
+      </div>
+    </section>
+    <section>
+      <h2>Command test</h2>
+      <div class="pad">
+        <label>Device<select id="cmdDevice"></select></label>
+        <div class="row">
+          <label>Preset<select id="cmdPreset"><option value="">Raw text</option></select></label>
+          <label>Raw text<input id="cmdRaw" placeholder="*HQ,ID,...#" class="mono"></label>
+        </div>
+        <button id="send">Send</button>
+        <div class="msg" id="cmdMsg"></div>
+        <div class="quiet" style="font-size:12px">Watch the log for a <code>V4</code> reply, then confirm the relay with an SMS <code>status</code>.</div>
+      </div>
+    </section>
+    <section>
+      <h2>Raw traffic</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let token = '';
+  try { token = localStorage.getItem('gpstrack-token') || ''; } catch (e) {}
+  let info = null, presets = {};
+
+  // The map is optional: if Leaflet fails to load, the rest still works.
+  let map = null;
+  try {
+    map = L.map('map').setView([-46.413, 168.353], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  } catch (e) {
+    $('map').innerHTML = '<div class="empty">Map unavailable.</div>';
+  }
+  const markers = {};
+  let fitted = false;
+
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const ago = t => {
+    const s = Math.round((Date.now() - new Date(t)) / 1000);
+    if (s < 60) return s + ' s ago';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    return new Date(t).toLocaleString();
+  };
+
+  async function api(path, opts = {}) {
+    opts.headers = Object.assign({}, opts.headers, token ? { Authorization: 'Bearer ' + token } : {});
+    const r = await fetch(path, opts);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(body.error || r.statusText); e.status = r.status; throw e; }
+    return body;
+  }
+
+  function renderDevices(list) {
+    const tb = $('devices');
+    if (!list.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="empty">No trackers have connected yet. Point a unit at this server on TCP port 5013.</td></tr>';
+    } else {
+      tb.innerHTML = list.map(d => {
+        const p = d.position;
+        const pos = p ? `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}${p.valid ? '' : ' <span class="quiet">(no fix)</span>'}` : '<span class="quiet">none yet</span>';
+        return `<tr>
+          <td><span class="dot ${d.connected ? 'on' : 'off'}"></span><span class="mono">${esc(d.id)}</span>
+            <div class="quiet mono">${esc(d.remote)} · ${d.messages} msgs</div></td>
+          <td>${ago(d.lastSeen)}<div class="quiet">${esc(d.lastType)}</div>
+            ${d.lastReply ? `<div class="quiet mono" title="last non-position message">${esc(d.lastReply)}</div>` : ''}</td>
+          <td class="mono">${pos}</td>
+          <td>${p ? p.speedKmh + ' km/h' : ''}</td>
+          <td class="mono">${p ? esc(p.statusHex) + '<div class="quiet">0-bits: ' + esc((p.activeBits || []).join(' ')) + '</div>' : ''}</td>
+        </tr>`;
+      }).join('');
+    }
+    const sel = $('cmdDevice'), cur = sel.value;
+    sel.innerHTML = list.map(d => `<option value="${esc(d.id)}">${esc(d.id)}${d.connected ? '' : ' (offline)'}</option>`).join('');
+    if (cur) sel.value = cur;
+
+    if (!map) return;
+    const pts = [];
+    list.forEach(d => {
+      if (!d.position) return;
+      const ll = [d.position.lat, d.position.lon]; pts.push(ll);
+      const label = `<b>${esc(d.id)}</b><br>${d.position.speedKmh} km/h · ${ago(d.lastSeen)}`;
+      if (markers[d.id]) markers[d.id].setLatLng(ll).setPopupContent(label);
+      else markers[d.id] = L.marker(ll).addTo(map).bindPopup(label);
+    });
+    if (pts.length && !fitted) { map.fitBounds(pts, { maxZoom: 15, padding: [30, 30] }); fitted = true; }
+  }
+
+  function renderLog(entries) {
+    $('log').innerHTML = entries.length ? entries.map(e => `<div>
+      <span><span class="tag ${e.dir}">${e.dir}</span>
+        <span class="quiet"> ${new Date(e.time).toLocaleTimeString()} ${esc(e.deviceId || e.remote || '')}</span></span>
+      ${e.text ? `<code>${esc(e.text)}</code>` : ''}
+      ${e.hex ? `<code>hex ${esc(e.hex)}</code>` : ''}
+      ${e.note ? `<span class="quiet">${esc(e.note)}</span>` : ''}
+    </div>`).join('') : '<div class="empty">Nothing yet.</div>';
+  }
+
+  async function refresh() {
+    $('clock').textContent = new Date().toLocaleString();
+    try {
+      const [devs, log] = await Promise.all([api('/api/devices'), api('/api/log?n=150')]);
+      renderDevices(devs); renderLog(log);
+      $('tokenBox').hidden = true;
+    } catch (e) {
+      if (e.status === 401) $('tokenBox').hidden = false;
+    }
+  }
+
+  function updateSend() {
+    const p = presets[$('cmdPreset').value];
+    $('send').className = p && p.danger ? 'danger' : '';
+    $('send').textContent = p ? 'Send: ' + p.label : 'Send raw';
+    $('cmdRaw').disabled = !!p;
+    $('send').disabled = !info || !info.commandsEnabled;
+  }
+
+  $('cmdPreset').onchange = updateSend;
+  $('saveToken').onclick = () => {
+    token = $('token').value.trim();
+    try { localStorage.setItem('gpstrack-token', token); } catch (e) {}
+    refresh();
+  };
+  $('send').onclick = async () => {
+    const id = $('cmdDevice').value, preset = $('cmdPreset').value, msg = $('cmdMsg');
+    if (!id) { msg.className = 'msg err'; msg.textContent = 'No device selected.'; return; }
+    const p = presets[preset];
+    if (p && p.danger && !confirm(`Send "${p.label}" to ${id}? The vehicle will lose fuel and stop.`)) return;
+    try {
+      const r = await api(`/api/devices/${encodeURIComponent(id)}/command`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(preset ? { preset } : { raw: $('cmdRaw').value }) });
+      msg.className = 'msg ok'; msg.textContent = 'Sent ' + r.sent;
+      refresh();
+    } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+  };
+
+  api('/api/info').then(i => {
+    info = i;
+    i.presets.forEach(p => {
+      presets[p.name] = p;
+      $('cmdPreset').insertAdjacentHTML('beforeend', `<option value="${esc(p.name)}">${esc(p.label)}</option>`);
+    });
+    if (!i.commandsEnabled) {
+      $('cmdMsg').className = 'msg quiet';
+      $('cmdMsg').textContent = 'Commands are off. Set GPSTRACK_TOKEN on the server to enable them.';
+    }
+    updateSend();
+  });
+  refresh();
+  setInterval(refresh, 3000);
+})();
+</script>
+</body>
+</html>
