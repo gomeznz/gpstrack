@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -134,7 +135,7 @@ func (h *Hub) handle(c net.Conn) {
 func (h *Hub) frame(s *session, f h02.Frame) string {
 	now := h.now().UTC()
 	if f.Text == "" {
-		h.record(LogEntry{Time: now, Dir: "in", Remote: s.remote, Hex: hex.EncodeToString(f.Binary), Note: "not a text frame"})
+		h.record(LogEntry{Time: now, Dir: "in", Remote: s.remote, Hex: hex.EncodeToString(f.Binary), Note: describeBinary(f.Binary)})
 		return ""
 	}
 	msg, err := h02.ParseText(f.Text)
@@ -182,6 +183,25 @@ func (h *Hub) frame(s *session, f h02.Frame) string {
 		}
 	}
 	return msg.DeviceID
+}
+
+// describeBinary labels common non-tracker traffic so it isn't mistaken for
+// a tracker in the log.
+func describeBinary(b []byte) string {
+	switch {
+	case len(b) >= 3 && b[0] == 0x16 && b[1] == 0x03:
+		return "HTTPS handshake from a web browser or port scanner, not a tracker"
+	case bytes.HasPrefix(b, []byte("GET ")), bytes.HasPrefix(b, []byte("POST ")),
+		bytes.HasPrefix(b, []byte("HEAD ")):
+		return "plain HTTP request from a web browser or port scanner, not a tracker"
+	case bytes.HasPrefix(b, []byte("SSH-")):
+		return "SSH client, not a tracker"
+	case len(b) > 0 && b[0] == '$':
+		return "binary H02 frame (not decoded yet)"
+	case bytes.HasPrefix(b, []byte("TRV")):
+		return "TRV protocol frame (not decoded yet)"
+	}
+	return "unrecognised data, not H02 text"
 }
 
 var ErrNotConnected = errors.New("device is not connected")

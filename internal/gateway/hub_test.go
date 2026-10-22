@@ -89,3 +89,19 @@ func waitFor(t *testing.T, ok func() bool) {
 	}
 	t.Fatal("timed out")
 }
+
+func TestDescribeBinary(t *testing.T) {
+	cases := map[string]string{
+		"\x16\x03\x01\x02\x00": "HTTPS handshake",
+		"GET / HTTP/1.1\r\n":   "plain HTTP",
+		"SSH-2.0-OpenSSH":      "SSH",
+		"$\x41\x06":            "binary H02",
+		"TRVAP00353":           "TRV",
+		"\x00\x01":             "unrecognised",
+	}
+	for in, want := range cases {
+		if got := describeBinary([]byte(in)); !strings.Contains(got, want) {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+}
