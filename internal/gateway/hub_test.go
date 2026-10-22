@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"encoding/hex"
 	"net"
 	"os"
 	"path/filepath"
@@ -102,6 +103,51 @@ func TestDescribeBinary(t *testing.T) {
 	for in, want := range cases {
 		if got := describeBinary([]byte(in)); !strings.Contains(got, want) {
 			t.Errorf("%q: %q", in, got)
+		}
+	}
+}
+
+// 4G units (CJ730 / MV730 Plus) send binary H02. Sample from the Traccar forum.
+const binarySample = "2473400069542126502402243349095900035294470e000000fffffbffff041f300000000001cc00ff00009d0243000000001a"
+
+func TestBinaryOverTCPAndUDP(t *testing.T) {
+	h := NewHub(nil, nil)
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+	go h.Serve(ln)
+	pc, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer pc.Close()
+	go h.ServeUDP(pc)
+
+	frame, _ := hex.DecodeString(binarySample)
+
+	// TCP: two frames back to back, the first split mid-way.
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write(frame[:10])
+	time.Sleep(20 * time.Millisecond)
+	c.Write(append(append([]byte{}, frame[10:]...), frame...))
+	waitFor(t, func() bool { d := h.Devices(); return len(d) == 1 && d[0].Messages == 2 })
+	d := h.Devices()[0]
+	if d.ID != "7340006954" || !d.Connected || d.Position == nil || d.Position.Lat != 33.818265 {
+		t.Fatalf("tcp device %+v", d)
+	}
+
+	// UDP: same device ID from a datagram counts as another message.
+	u, err := net.Dial("udp", pc.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Close()
+	u.Write(frame)
+	u.Write([]byte("*HQ,4106054111,V1,213045,A,4624.5260,S,16821.4340,E,0,0,211026,FFFFFFFF#"))
+	waitFor(t, func() bool { return len(h.Devices()) == 2 })
+	for _, d := range h.Devices() {
+		if d.ID == "4106054111" && (d.Connected || !strings.HasPrefix(d.Remote, "udp:")) {
+			t.Errorf("udp device %+v", d)
 		}
 	}
 }

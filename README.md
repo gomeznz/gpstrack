@@ -5,7 +5,8 @@ proves the 4G CJ720 tracker end to end before the real platform is built.
 
 It:
 
-- listens for trackers on **TCP 5013** and speaks the **H02** text protocol
+- listens for trackers on **TCP and UDP 5013** and decodes **H02**, both the
+  text form (`*HQ,...#`) and the binary form (`$...`) used by 4G units
 - logs every byte in both directions to daily JSON Lines files
 - decodes position reports (`V1`) and shows them on a status page with a map
 - sends test commands, including the fuel cut, down the tracker's open
@@ -47,14 +48,36 @@ in `/var/lib/gpstrack`, and `/etc/gpstrack/gpstrack.env` with a random token
 
 ### Network
 
-- Port-forward **TCP 5013** on the router to the Pi. Nothing else.
+- Port-forward **TCP and UDP 5013** on the router to the Pi. Nothing else.
+  (The gateway listens on both; some H02 units may send over UDP.)
 - Keep the status page (8080) on the LAN only.
 - If using a Cloudflare hostname for the trackers, the DNS record must be
   **DNS only (grey cloud)**. Cloudflare's normal proxy carries web traffic,
   not a tracker's raw TCP.
 - A fixed public IP is safest for the first test; see the hostname test below.
 
-## Setting up a CJ720 (by SMS)
+## Setting up a CJ730 Plus 4G (by SMS)
+
+The 4G unit ASI is testing behaves like the **CJ730 Plus 4G (YunTrack)**: H02 on
+port 5013, but it only answers SMS from its admin number, and the server is
+set with a colon ([Traccar forum](https://www.traccar.org/forums/topic/cj730-plus-4g-yuntrack/)).
+
+| Order | SMS | Notes |
+| --- | --- | --- |
+| 1 | `admin123456 +6421XXXXXXX` | Your mobile in **+64** format. The unit ignores other numbers after this |
+| 2 | `apn123456 <One NZ IoT APN>` | CJ720 form; check it took in the `param1` reply |
+| 3 | `adminip123456 <public IP>:5013` | **Colon**, not a space |
+| 4 | `status` | e.g. `BAT:9,GPRS:1,GSM:5,GPS:0,ACC:0,oil:1,Power:1,S:1`. `GPRS:1` = data up, `oil:1` = fuel on |
+| 5 | `param1` | Firmware, ID, server and APN |
+
+- Won't accept commands? An admin number may already be set from another phone:
+  `noadmin123456`, or `begin123456` to factory reset.
+- Factory server, to send it back to the YunTrack app: `adminip123456 113.98.254.178:7700`.
+- Fuel: `555` cuts, `666` restores (SMS). Over TCP, the forum reports the `S20` stop
+  works but resume may not, so keep the `666` SMS handy when testing.
+- 4G units often report positions as **binary H02** (starting `$`). The gateway decodes these.
+
+## Setting up an original CJ720 (by SMS)
 
 Default password is `123456` (fine for bench testing). Replace `<...>`:
 

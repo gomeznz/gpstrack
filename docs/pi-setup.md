@@ -122,10 +122,11 @@ Press **Ctrl+C** to stop the simulator.
 
 ## 8. Open the tracker port to the internet
 
-The CJ720 connects in over 4G, so your router must pass **TCP 5013** to the Pi:
+The tracker connects in over 4G, so your router must pass port **5013** to the Pi:
 
-1. In the router, add a **port forward**: external TCP `5013` → `<pi-ip>`
-   port `5013`. Do **not** forward 8080.
+1. In the router, add a **port forward**: external `5013` → `<pi-ip>` port
+   `5013`, protocol **TCP and UDP** (some routers call it "Both"). Do **not**
+   forward 8080.
 2. Find your public IP: `curl -4 ifconfig.me` on the Pi.
 3. Test from outside your network, e.g. a laptop tethered to a phone on mobile data:
    ```sh
@@ -139,9 +140,13 @@ record for the tracker must be **DNS only (grey cloud)**, not proxied.
 
 ## 9. Point the CJ720 at the Pi
 
-Follow *Setting up a CJ720 (by SMS)* in the [README](../README.md), using the
-public IP from step 8. The unit should show up on the status page within a
-minute of `gprs123456`.
+Follow the SMS setup in the [README](../README.md) for your model (CJ730 Plus
+4G or original CJ720), using the public IP from step 8. Once `status` shows
+`GPRS:1`, the unit should show up on the status page within a minute or two.
+
+Browsers and port scanners on the internet will also hit port 5013. The log
+labels those ("HTTPS handshake ... not a tracker"); the tracker is the one
+whose entries carry a device ID.
 
 ## Updating
 

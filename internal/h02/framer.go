@@ -39,6 +39,10 @@ func (f *Framer) Push(b []byte) []Frame {
 			out = append(out, Frame{Text: string(f.take(end + 1))})
 			continue
 		}
+		// Binary H02: wait until the fixed part has arrived.
+		if f.buf[0] == '$' && len(f.buf) < BinaryMinLen && !bytes.Contains(f.buf[1:], []byte("*HQ")) {
+			break
+		}
 		// Not a text frame: pass through everything up to the next "*HQ".
 		next := bytes.Index(f.buf[1:], []byte("*HQ"))
 		if next < 0 {
@@ -48,6 +52,11 @@ func (f *Framer) Push(b []byte) []Frame {
 		out = append(out, Frame{Binary: f.take(next + 1)})
 	}
 	return out
+}
+
+// Rest returns bytes held back waiting for the rest of a frame.
+func (f *Framer) Rest() []byte {
+	return f.buf
 }
 
 func (f *Framer) take(n int) []byte {

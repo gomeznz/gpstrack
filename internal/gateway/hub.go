@@ -104,7 +104,7 @@ func (h *Hub) handle(c net.Conn) {
 		n, err := c.Read(buf)
 		if n > 0 {
 			for _, f := range fr.Push(buf[:n]) {
-				if id := h.frame(s, f); id != "" {
+				if id := h.frame(s, remote, f); id != "" {
 					deviceID = id
 				}
 			}
@@ -132,45 +132,78 @@ func (h *Hub) handle(c net.Conn) {
 }
 
 // frame handles one frame and returns the device ID it carried, if any.
-func (h *Hub) frame(s *session, f h02.Frame) string {
+// s is the TCP session, or nil for a UDP datagram (remote is then the
+// sender's address and no command channel exists).
+func (h *Hub) frame(s *session, remote string, f h02.Frame) string {
 	now := h.now().UTC()
 	if f.Text == "" {
-		h.record(LogEntry{Time: now, Dir: "in", Remote: s.remote, Hex: hex.EncodeToString(f.Binary), Note: describeBinary(f.Binary)})
-		return ""
+		if !h02.IsBinary(f.Binary) {
+			h.record(LogEntry{Time: now, Dir: "in", Remote: remote, Hex: hex.EncodeToString(f.Binary), Note: describeBinary(f.Binary)})
+			return ""
+		}
+		var id string
+		for _, part := range h02.SplitBinary(f.Binary) {
+			entry := LogEntry{Time: now, Dir: "in", Remote: remote, Hex: hex.EncodeToString(part)}
+			pos, err := h02.ParseBinary(part)
+			if err != nil {
+				entry.Note = "binary H02, could not decode: " + err.Error()
+				h.record(entry)
+				continue
+			}
+			entry.DeviceID, entry.Note = pos.DeviceID, "binary H02 position"
+			h.record(entry)
+			h.update(s, remote, pos.DeviceID, "binary", pos, "", now)
+			id = pos.DeviceID
+		}
+		return id
 	}
 	msg, err := h02.ParseText(f.Text)
 	if err != nil {
-		h.record(LogEntry{Time: now, Dir: "in", Remote: s.remote, Text: f.Text, Note: err.Error()})
+		h.record(LogEntry{Time: now, Dir: "in", Remote: remote, Text: f.Text, Note: err.Error()})
 		return ""
 	}
-	entry := LogEntry{Time: now, Dir: "in", Remote: s.remote, DeviceID: msg.DeviceID, Text: f.Text}
+	entry := LogEntry{Time: now, Dir: "in", Remote: remote, DeviceID: msg.DeviceID, Text: f.Text}
 
 	var pos *h02.Position
+	reply := ""
 	if msg.Type == "V1" {
 		pos, err = msg.Position()
 		if err != nil {
 			entry.Note = err.Error()
 		}
+	} else {
+		reply = f.Text
 	}
 	h.record(entry)
+	h.update(s, remote, msg.DeviceID, msg.Type, pos, reply, now)
+	return msg.DeviceID
+}
 
+// update records that a device was heard from.
+func (h *Hub) update(s *session, remote, id, typ string, pos *h02.Position, reply string, now time.Time) {
 	h.mu.Lock()
-	d := h.devices[msg.DeviceID]
+	d := h.devices[id]
 	if d == nil {
-		d = &Device{ID: msg.DeviceID, FirstSeen: now}
-		h.devices[msg.DeviceID] = d
-		log.Printf("new device %s from %s", msg.DeviceID, s.remote)
+		d = &Device{ID: id, FirstSeen: now}
+		h.devices[id] = d
+		log.Printf("new device %s from %s", id, remote)
 	}
-	if old := h.sessions[msg.DeviceID]; old != nil && old != s {
-		old.conn.Close() // the unit reconnected; drop the stale socket
+	if s != nil {
+		if old := h.sessions[id]; old != nil && old != s {
+			old.conn.Close() // the unit reconnected; drop the stale socket
+		}
+		h.sessions[id] = s
+		d.Connected = true
+	} else if h.sessions[id] == nil {
+		d.Connected = false
 	}
-	h.sessions[msg.DeviceID] = s
-	d.Connected, d.Remote, d.LastSeen, d.LastType = true, s.remote, now, msg.Type
+	d.Remote, d.LastSeen, d.LastType = remote, now, typ
 	d.Messages++
 	if pos != nil {
 		d.Position = pos
-	} else if msg.Type != "V1" {
-		d.LastReply = f.Text
+	}
+	if reply != "" {
+		d.LastReply = reply
 	}
 	h.mu.Unlock()
 
@@ -182,7 +215,30 @@ func (h *Hub) frame(s *session, f h02.Frame) string {
 			log.Printf("positions log: %v", err)
 		}
 	}
-	return msg.DeviceID
+}
+
+// ServeUDP logs and decodes datagrams until the connection is closed.
+// UDP has no session, so commands can't be sent to a UDP-only device.
+func (h *Hub) ServeUDP(pc net.PacketConn) error {
+	buf := make([]byte, 2048)
+	for {
+		n, addr, err := pc.ReadFrom(buf)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return err
+		}
+		remote := "udp:" + addr.String()
+		var fr h02.Framer
+		frames := fr.Push(buf[:n])
+		if len(fr.Rest()) > 0 {
+			frames = append(frames, h02.Frame{Binary: fr.Rest()})
+		}
+		for _, f := range frames {
+			h.frame(nil, remote, f)
+		}
+	}
 }
 
 // describeBinary labels common non-tracker traffic so it isn't mistaken for
@@ -197,7 +253,7 @@ func describeBinary(b []byte) string {
 	case bytes.HasPrefix(b, []byte("SSH-")):
 		return "SSH client, not a tracker"
 	case len(b) > 0 && b[0] == '$':
-		return "binary H02 frame (not decoded yet)"
+		return "starts like binary H02 but the layout doesn't match"
 	case bytes.HasPrefix(b, []byte("TRV")):
 		return "TRV protocol frame (not decoded yet)"
 	}
